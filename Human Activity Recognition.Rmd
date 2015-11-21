@@ -1,0 +1,124 @@
+---
+title: "Human Activity Recognition"
+date: "November 21, 2015"
+---
+
+# Synopisis
+The objective of this assignment is to predict the manner in which a participant performed an exercise, given various data collected during the exercise. The activity data is available from accelerometers on the belt, forearm, arm, and dumbell of six participants. These participants were asked to perform barbell lifts correctly and incorrectly in five different ways. The training data is from http://groupware.les.inf.puc-rio.br/har.
+
+Multiple prediction models  - Decision Tree models and Random Forest models - were built using the training data. A part of the training data was reserved for cross-validation. Based on the cross-validation results, the model with the highest accuracy was picked. This model is a Random Forest model built using 100 trees which showed an accuracy of ~99.29% during cross-validation.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(caret)
+library(stringr)
+library(rpart)
+library(randomForest)
+library(rattle)
+```
+
+# Load and preprocess training data
+```{r}
+har <- read.csv("pml-training.csv", header=TRUE, quote="\"", sep=",",  stringsAsFactors =F, na.strings=c("", "NA"))
+```
+
+
+```{r}
+#Remove the first 7 columns as they contain index#, name and timestamp info - none of which can be a predictor
+har <- har[,-c(1:7)]
+#Remove columns which contain NA values as these columns cannot be good predictors
+har <- har[, colSums(is.na(har))==0]
+```
+
+# Split data into training & test
+```{r}
+set.seed(1234)
+inTrain <- createDataPartition(y=har$classe,p=0.60, list=FALSE)
+har.train = har[ inTrain,] ; har.test = har[-inTrain,]
+```
+# Build models
+
+We will built multiple models. Each model will be applied against har.test (the cross-validation data set) to determine the accuracy.
+
+## Model 1: Decision Tree using 'rpart'
+```{r}
+model.rpart <- rpart(classe ~ ., data=har.train, method="class")
+prediction <- predict(model.rpart, har.test, type="class")
+predictionQuality <- confusionMatrix(prediction, har.test$classe)
+predictionQuality$overall[1]
+```
+
+The accuracy is not very high. Let's see if the accuracy can be improved by doing a PCA preprocessing.
+
+## Model 2: Decision Tree using 'rpart' with PCA
+
+```{r}
+preProc <- preProcess(har.train,method="pca",thresh=0.8)
+trainPC <- predict(preProc, har.train)
+testPC <- predict(preProc, har.test)
+model.rpart.pca <- rpart(formula=har.train$classe ~ ., data=trainPC, method="class")
+prediction <- predict(model.rpart.pca, testPC, type = "class")
+predictionQuality <- confusionMatrix(prediction, har.test$classe)
+predictionQuality$overall[1]
+```
+
+The accuracy went down significantly with PCA. Perhaps a single decision tree is not sufficient. Let's try random forest models.
+
+## Model 3: Random forest with 10 trees
+```{r}
+model.rf10 <- randomForest(as.factor(classe) ~ ., data=har.train, importance=TRUE, ntree=10)
+prediction <- predict(model.rf10, har.test)
+predictionQuality <- confusionMatrix(prediction, har.test$classe)
+predictionQuality$overall[1]
+```
+
+The accuracy is good, let's see if we can get a better accuracy by increasing the number of trees.
+
+## Model 4: Random forest with 100 trees
+```{r}
+model.rf100 <- randomForest(as.factor(classe) ~ ., data=har.train, importance=TRUE, ntree=100)
+prediction <- predict(model.rf100, har.test)
+predictionQuality <- confusionMatrix(prediction, har.test$classe)
+predictionQuality$overall[1]
+```
+
+The accuracy improved, let's see if we can get an even better accuracy by increasing the number of trees further.
+
+## Model 5: Random forest with 500 trees
+```{r}
+model.rf500 <- randomForest(as.factor(classe) ~ ., data=har.train, importance=TRUE, ntree=500)
+prediction <- predict(model.rf500, har.test)
+predictionQuality <- confusionMatrix(prediction, har.test$classe)
+predictionQuality$overall[1]
+```
+
+The accuracy went down slightly. So perhaps using 100 trees is the best option with random forest.
+
+#Choosing the Best Model
+From the models tried, the random forest with 100 trees seems to be the best one in terms of accuracy. The accuracy rate, and sensitivity/specifity for different values of 'classe' can be seen below.
+
+```{r}
+predictionQuality <- confusionMatrix(predict(model.rf100, har.test), har.test$classe)
+predictionQuality
+errorRate <- 1-predictionQuality$overall['Accuracy']; names(errorRate) <- c("ErrorRate")
+```
+
+The error rate for this model is:
+
+```{r}
+errorRate
+```
+
+# Applying the Model on pml-testing
+```{r}
+questions <- read.csv("pml-testing.csv", header=TRUE, quote="\"", sep=",",  stringsAsFactors =F)
+prediction <- predict(model.rf100, questions)
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(prediction)
+```
+
